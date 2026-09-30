@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" role="img" aria-labelledby="title desc">
+  <title id="title">Dva fyzické clustery se společným backendovým NFS exportem</title>
+  <desc id="desc">Každý cluster má vlastní aplikační Pody, klientské PVC a nfs-gate. Backendový NFS svazek obou instancí nfs-gate se připojuje ke stejnému externímu NFS serveru a stejné exportované cestě.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9 Z" fill="#475569"/></marker>
+    <style>
+      .title { font: 700 29px Arial, sans-serif; fill: #172554; }
+      .cluster { font: 700 23px Arial, sans-serif; fill: #1e3a8a; }
+      .main { font: 700 20px Arial, sans-serif; fill: #172554; }
+      .sub { font: 17px Arial, sans-serif; fill: #334155; }
+      .arrow { fill: none; stroke: #475569; stroke-width: 3; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="960" height="520" fill="#fff"/>
+  <text x="480" y="42" text-anchor="middle" class="title">Více clusterů: společný backend</text>
+
+  <rect x="30" y="65" width="420" height="330" rx="16" fill="#f5f8ff" stroke="#90aee2" stroke-width="2"/>
+  <rect x="510" y="65" width="420" height="330" rx="16" fill="#f5f8ff" stroke="#90aee2" stroke-width="2"/>
+  <text x="240" y="97" text-anchor="middle" class="cluster">Fyzický cluster A</text>
+  <text x="720" y="97" text-anchor="middle" class="cluster">Fyzický cluster B</text>
+
+  <rect x="100" y="114" width="280" height="56" rx="11" fill="#e8f1ff" stroke="#79a5e8" stroke-width="2"/>
+  <rect x="580" y="114" width="280" height="56" rx="11" fill="#e8f1ff" stroke="#79a5e8" stroke-width="2"/>
+  <text x="240" y="147" text-anchor="middle" class="main">Aplikační Pody</text>
+  <text x="720" y="147" text-anchor="middle" class="main">Aplikační Pody</text>
+  <path class="arrow" d="M240 170 V191"/><path class="arrow" d="M720 170 V191"/>
+
+  <rect x="100" y="200" width="280" height="60" rx="11" fill="#e9f8f4" stroke="#70baa7" stroke-width="2"/>
+  <rect x="580" y="200" width="280" height="60" rx="11" fill="#e9f8f4" stroke="#70baa7" stroke-width="2"/>
+  <text x="240" y="226" text-anchor="middle" class="main">Klientské PVC / NFS PV</text>
+  <text x="240" y="248" text-anchor="middle" class="sub">jen pro cluster A</text>
+  <text x="720" y="226" text-anchor="middle" class="main">Klientské PVC / NFS PV</text>
+  <text x="720" y="248" text-anchor="middle" class="sub">jen pro cluster B</text>
+  <path class="arrow" d="M240 260 V282"/><path class="arrow" d="M720 260 V282"/>
+
+  <rect x="100" y="291" width="280" height="76" rx="11" fill="#f1eafe" stroke="#ac8be0" stroke-width="2"/>
+  <rect x="580" y="291" width="280" height="76" rx="11" fill="#f1eafe" stroke="#ac8be0" stroke-width="2"/>
+  <text x="240" y="321" text-anchor="middle" class="main">nfs-gate A</text>
+  <text x="240" y="347" text-anchor="middle" class="sub">backendové NFS PVC</text>
+  <text x="720" y="321" text-anchor="middle" class="main">nfs-gate B</text>
+  <text x="720" y="347" text-anchor="middle" class="sub">backendové NFS PVC</text>
+
+  <path class="arrow" d="M240 367 V418 H397"/><path class="arrow" d="M720 367 V418 H563"/>
+  <rect x="300" y="429" width="360" height="64" rx="13" fill="#fff3df" stroke="#e8ad50" stroke-width="2"/>
+  <text x="480" y="456" text-anchor="middle" class="main">Jeden externí NFS export</text>
+  <text x="480" y="480" text-anchor="middle" class="sub">stejný server + stejná cesta</text>
+</svg>

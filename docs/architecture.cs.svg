@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 770" role="img" aria-labelledby="title desc">
+  <title id="title">Cesta souborových operací přes nfs-gate</title>
+  <desc id="desc">Tři aplikační Pody sdílejí klientské PVC, které se váže na NFS PV. Ten míří přes Service do Podu nfs-gate. Server exportuje vlastní backendový adresář z emptyDir nebo z backendového PVC.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9 Z" fill="#4b5563"/></marker>
+    <style>
+      .title { font: 700 31px Arial, sans-serif; fill: #172554; }
+      .main { font: 700 24px Arial, sans-serif; fill: #172554; }
+      .sub { font: 18px Arial, sans-serif; fill: #334155; }
+      .note { font: 17px Arial, sans-serif; fill: #475569; }
+      .arrow { fill: none; stroke: #4b5563; stroke-width: 3; marker-end: url(#arrow); }
+      .branch { fill: none; stroke: #4b5563; stroke-width: 3; }
+    </style>
+  </defs>
+  <rect width="960" height="770" fill="#fff"/>
+  <text x="480" y="45" text-anchor="middle" class="title">Jak se soubor dostane ke všem Podům</text>
+
+  <rect x="30" y="75" width="280" height="80" rx="13" fill="#e8f1ff" stroke="#79a5e8" stroke-width="2"/>
+  <rect x="340" y="75" width="280" height="80" rx="13" fill="#e8f1ff" stroke="#79a5e8" stroke-width="2"/>
+  <rect x="650" y="75" width="280" height="80" rx="13" fill="#e8f1ff" stroke="#79a5e8" stroke-width="2"/>
+  <text x="170" y="108" text-anchor="middle" class="main">Aplikační Pod A</text><text x="170" y="137" text-anchor="middle" class="sub">/shared</text>
+  <text x="480" y="108" text-anchor="middle" class="main">Aplikační Pod B</text><text x="480" y="137" text-anchor="middle" class="sub">/shared</text>
+  <text x="790" y="108" text-anchor="middle" class="main">Aplikační Pod C</text><text x="790" y="137" text-anchor="middle" class="sub">/shared</text>
+
+  <path class="branch" d="M170 155 V180 H480 M480 155 V180 M790 155 V180 H480"/>
+  <path class="arrow" d="M480 180 V202"/>
+  <rect x="250" y="210" width="460" height="73" rx="13" fill="#e9f8f4" stroke="#70baa7" stroke-width="2"/>
+  <text x="480" y="240" text-anchor="middle" class="main">Klientské PVC</text>
+  <text x="480" y="266" text-anchor="middle" class="sub">jedno sdílené claim pro všechny Pody</text>
+
+  <path class="arrow" d="M480 283 V309"/>
+  <rect x="250" y="318" width="460" height="73" rx="13" fill="#e9f8f4" stroke="#70baa7" stroke-width="2"/>
+  <text x="480" y="348" text-anchor="middle" class="main">NFS PersistentVolume</text>
+  <text x="480" y="374" text-anchor="middle" class="sub">mount options, adresa serveru a export /</text>
+
+  <path class="arrow" d="M480 391 V417"/>
+  <rect x="250" y="426" width="460" height="73" rx="13" fill="#fff3df" stroke="#e8ad50" stroke-width="2"/>
+  <text x="480" y="456" text-anchor="middle" class="main">Service nfs-gate</text>
+  <text x="480" y="482" text-anchor="middle" class="sub">stabilní síťový bod, TCP 12049</text>
+
+  <path class="arrow" d="M480 499 V525"/>
+  <rect x="250" y="534" width="460" height="73" rx="13" fill="#f1eafe" stroke="#ac8be0" stroke-width="2"/>
+  <text x="480" y="564" text-anchor="middle" class="main">Pod nfs-gate</text>
+  <text x="480" y="590" text-anchor="middle" class="sub">NFSv3 → souborové operace v /data</text>
+
+  <path class="branch" d="M480 607 V635 H245 M480 635 H715"/>
+  <path class="arrow" d="M245 635 V657"/><path class="arrow" d="M715 635 V657"/>
+  <rect x="55" y="666" width="380" height="72" rx="13" fill="#f1f5f9" stroke="#a2afbf" stroke-width="2"/>
+  <rect x="525" y="666" width="380" height="72" rx="13" fill="#f1f5f9" stroke="#a2afbf" stroke-width="2"/>
+  <text x="245" y="695" text-anchor="middle" class="main">emptyDir</text>
+  <text x="245" y="721" text-anchor="middle" class="sub">dočasná data pro test</text>
+  <text x="715" y="695" text-anchor="middle" class="main">Backendové PVC</text>
+  <text x="715" y="721" text-anchor="middle" class="sub">data mimo životnost Podu</text>
+  <text x="480" y="760" text-anchor="middle" class="note">Dole se vybírá jedna z možností. Klientské PVC není backendové PVC.</text>
+</svg>

@@ -1,0 +1,16 @@
+/bin/
+/demo/
+/.env
+/.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+kubeconfig*
+/.aws/
+/.kube/
+/.ssh/
+/.netrc
+/.npmrc
+.DS_Store
+*.swp
