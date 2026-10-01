@@ -1,19 +1,19 @@
 # nfs-gate
 
-`nfs-gate` je malý NFSv3 server v uživatelském prostoru. Zpřístupní jeden existující POSIX adresář přes stabilní NFS adresu. V Kubernetes nebo OpenShiftu tak mohou různé aplikace pracovat se stejnými soubory, i když se úložiště pod serverem časem změní.
+`nfs-gate` je malý NFSv3 server v uživatelském prostoru. Zpřístupní jeden existující POSIX adresář nebo S3 bucket/prefix přes stabilní NFS adresu. V Kubernetes nebo OpenShiftu tak mohou různé aplikace pracovat se stejnými soubory, i když se úložiště pod serverem časem změní.
 
 Krátké vysvětlení s obrázkem a příklady je v [přehledu architektury](docs/overview.cs.md), který je dostupný také jako [PDF](docs/overview.cs.pdf). Anglická dokumentace je v [README.md](README.md).
 
 ## Jak to funguje
 
 ```text
-Pody aplikací → klientské PVC → NFS PV → Service nfs-gate → Pod nfs-gate → backendový adresář
-                                                                        ↳ emptyDir nebo backendové PVC
+Pody aplikací → klientské PVC → NFS PV → Service nfs-gate → Pod nfs-gate → backend
+                                                                        ↳ emptyDir, připojené NFS/PVC nebo S3
 ```
 
-Více aplikačních Podů může používat **stejné klientské PVC**. Jeho statický NFS PV ukazuje na Service před `nfs-gate`. NFS mount provádí uzel Kubernetes a aplikace pak vidí běžný adresář. `nfs-gate` převádí NFSv3 operace na operace nad adresářem zadaným pomocí `--root`. Ten může pocházet z `emptyDir` pro dočasný test nebo z **jiného, backendového PVC** či jiného POSIX mountu. Klientské PVC a backendové PVC mají různé účely; `nfs-gate` žádné z nich nevytváří.
+Více aplikačních Podů může používat **stejné klientské PVC**. Jeho statický NFS PV ukazuje na Service před `nfs-gate`. NFS mount provádí uzel Kubernetes a aplikace pak vidí běžný adresář. `nfs-gate` převádí NFSv3 operace na operace nad adresářem zadaným pomocí `--root`. Ten může pocházet z `emptyDir` pro dočasný test, z **jiného, backendového PVC** nebo z přímo připojeného NFS. Klientské PVC a případné backendové PVC mají různé účely; `nfs-gate` žádné z nich nevytváří. S `--backend=s3` používá server místo `--root` bucket/prefix, ale klientské PV/PVC se připojuje stejně.
 
-Server sám nemountuje ani nezřizuje backendové úložiště. Exportuje právě jeden adresář pomocí knihovny [go-nfs](https://github.com/willscott/go-nfs). Adaptér souborového systému používá Go `os.Root`, aby souborové operace zůstaly uvnitř exportovaného adresáře.
+Server používá knihovnu [go-nfs](https://github.com/willscott/go-nfs). Výchozí backend `local` exportuje připojený adresář pomocí Go `os.Root`, aby souborové operace zůstaly uvnitř exportu. Backend `s3` pracuje přímo s objekty přes AWS SDK pro Go v2; nepotřebuje S3 mount, FUSE proces ani backendové PVC.
 
 ## Lokální spuštění
 
@@ -145,7 +145,17 @@ volumes:
 
 ### Více fyzických clusterů
 
-Pokud má každý cluster vlastní `nfs-gate` a aplikace ve všech clusterech mají vidět **stejné soubory**, musí být pod každým serverem připojen **tentýž externí NFS export se stejnou cestou**. V každém clusteru vytvořte backendový NFS PV/PVC mířící na společný export a připojte jej do tamního Podu `nfs-gate` na `/data`. Klientský NFS PV/PVC v každém clusteru stále ukazuje na *místní* Service `nfs-gate`. Oddělená `emptyDir` ani nezávisle vytvořená backendová PVC data mezi clustery nesdílejí. Dynamický NFS provisioner může v každém clusteru vytvořit jiný podadresář, proto ověřte skutečnou cestu upstream exportu. Viz [diagram a příklad pro dva clustery](docs/overview.cs.md#5-vice-fyzickych-clusteru).
+Pokud má každý cluster vlastní `nfs-gate` a aplikace ve všech clusterech mají vidět **stejné soubory**, musí být pod každým serverem připojen **tentýž externí NFS export se stejnou cestou**. Backendové PVC není nutné: externí NFS lze připojit do každého serverového Podu přímo přes inline `nfs` volume. Stávající `volumeMounts` na `/data` a `--root=/data` zůstanou:
+
+```yaml
+volumes:
+  - name: data
+    nfs:
+      server: <externi-nfs-server>
+      path: /spolecny-export
+```
+
+Hodnoty `server` a `path` musí být v obou clusterech stejné. Klientský NFS PV/PVC v každém clusteru stále ukazuje na *místní* Service `nfs-gate`. Oddělená `emptyDir` ani nezávisle vytvořená backendová PVC data mezi clustery nesdílejí. Inline NFS volume neumí určit mount options; pokud upstream vyžaduje vlastní port nebo verzi NFS, použijte backendový NFS PV/PVC s `mountOptions` nebo odpovídající konfiguraci uzlů. Viz [diagram a příklad pro dva clustery](docs/overview.cs.md#5-vice-fyzickych-clusteru).
 
 Externí NFS server musí být dostupný z uzlů všech clusterů a jeho oprávnění musí dovolit Podům `nfs-gate` číst a zapisovat. Cache může viditelnost změn mezi clustery zpozdit; souběžné zápisy musí koordinovat aplikace, protože `nfs-gate` neposkytuje distribuované zámky. Společný upstream NFS sdílí data, ale sám o sobě nezajišťuje HA instancí `nfs-gate` ani nezachovává jejich file handly po restartu.
 
@@ -157,9 +167,46 @@ Kapacita klientského NFS PV je deklarace Kubernetes, nikoli vynucená kvóta. O
 
 Pod serveru může mít na `/upstream` připojené existující PVC, jiný NFS share, FUSE nebo lokální disk. Pak spusťte `nfs-gate --root /upstream`. Aplikace dál používají stejnou NFS adresu. V backendu zajistěte správná oprávnění UID/GID.
 
+## Varianty úložiště
+
+| Varianta | Nastavení | Životnost dat |
+| --- | --- | --- |
+| Dočasné úložiště | `--backend=local --root=/data` a Kubernetes `emptyDir` | Do odstranění nebo nahrazení serverového Podu |
+| Připojený souborový systém | `--backend=local --root=/data` a NFS volume nebo backendové PVC | Podle skutečného úložiště |
+| S3 | `--backend=s3 --s3-bucket=... --s3-prefix=...` | V bucketu, nezávisle na serverovém Podu |
+
+`emptyDir` běžně používá disk uzlu. Zde znamená dočasná data bez persistence; samostatný RAM backend není potřeba.
+
+### Nastavení S3
+
+```bash
+./bin/nfs-gate --backend=s3 \
+  --s3-bucket=your-bucket --s3-prefix=shared --s3-region=us-east-1
+```
+
+Přihlašovací údaje používají standardní řetězec AWS SDK: proměnné prostředí (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, případně `AWS_SESSION_TOKEN`), sdílenou AWS konfiguraci nebo identitu workloadu/role. Hesla nepatří do manifestů ani argumentů procesu. V Kubernetes použijte samostatně vytvořený Secret nebo workload identity. Role potřebuje `s3:ListBucket` pro exportovaný prefix a `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` pro jeho objekty. Bucket s SSE-KMS může potřebovat i KMS oprávnění. Bucket musí předem existovat.
+
+Pro S3 kompatibilní službu přidejte `--s3-endpoint=https://objects.example.org --s3-path-style` a region přijímaný službou. Volitelné rozšíření checksumů SDK je vypnuté, pokud je operace nevyžaduje; kompatibilitu konkrétního poskytovatele ověřte před nasazením.
+
+Alternativní serverový manifest je [deploy/kubernetes-s3.yaml](deploy/kubernetes-s3.yaml). Změňte image, bucket, prefix a region; zajistěte Secret `nfs-gate-s3` nebo workload identity. Manifest má jednu repliku, `Recreate`, žádný datový svazek a read-only souborový systém kontejneru. Klientské PV/PVC zůstává kvůli současným NFS mount options. Docker image obsahuje CA certifikáty pro HTTPS.
+
+**Nad jedním S3 bucketem/prefixem smí být právě jeden aktivní nfs-gate.** Další zapisující server nesmí běžet ani v jiném clusteru; za provozu také neměňte objekty přímo. Server nemá distribuovaný zámek ani fencing. Jedna replika a `Recreate` brání překryvu při běžném rollout, ale při failoveru musí provozovatel zajistit zastavení původního procesu. Více clusterů může používat jeden společný gateway, pokud jeho NFS adresu dosáhnou jejich uzly.
+
+### Chování a omezení S3
+
+- Soubor odpovídá objektu `<prefix>/<relativni-cesta>`. Prázdné adresáře reprezentují nulové objekty s `/` na konci; existující prefixy objektů se zobrazí jako adresáře. Použijte vyhrazený prefix bez kolizí názvů souborů a adresářů. Klíče s komponentami pro únik z exportu, zpětnými lomítky nebo nekanonickou cestou se nezpřístupňují.
+- Čtení používá range GET. Každý NFS zápis, zkrácení souboru nebo změna atributů podle potřeby stáhne objekt a odešle celou novou verzi **ještě před potvrzením úspěchu**. Neexistuje cache neodeslaných změn ani požadavek na lokální persistenci. Chyba S3 se vrací jako NFS chyba. U přerušeného požadavku může být výsledek nejistý; před opakováním ne-idempotentní operace ověřte stav.
+- Zápisy jsou v jedné instanci serializované i přes nezávisle otevřené handly. To chrání před ztracenou aktualizací uvnitř procesu; souběžné úpravy aplikací stále potřebují koordinaci. Cache NFS klienta může zpozdit viditelnost změn.
+- Výchozí limit zapisovatelného souboru je **64 MiB**. Mění se pomocí `--s3-max-file-size` v bajtech, maximálně na 5 GB. Větší objekty lze číst, ale měnit ani přejmenovat je nelze. Úprava může dočasně spotřebovat několikanásobek velikosti souboru v RAM. I malý NFS zápis může přenášet celý objekt; backend je určený pro menší sdílené soubory, nikoli databázové soubory nebo velké soubory s častým náhodným zápisem.
+- Přejmenování souboru uloží cíl a potom smaže zdroj. Je serializované pro klienty tohoto gateway, ale v S3 není transakcí; pád procesu nebo chyba mazání mohou zanechat oba názvy. Přejmenování adresářů, symlinky, hardlinky, distribuované zámky, rozšířená ACL a speciální soubory nejsou podporované.
+- Oprávnění, UID/GID a čas změny jsou v metadatech objektu `nfs-*` a přežijí restart. Kořen exportu má pevná oprávnění a vlastníka; čas přístupu se samostatně neukládá. Atributy nejsou autentizací: NFS handler stále používá AUTH_NULL.
+- `--s3-timeout` má výchozí hodnotu 30 sekund na API požadavek. Start serveru a `/readyz` ověřují možnost vypsat export, nikoli oprávnění k zápisu. NFS handly zůstávají vázané na proces; po restartu může být potřeba remount, i když objekty zůstanou zachované.
+
+Viz [diagram S3](docs/s3.cs.svg), [S3 kapitola českého přehledu](docs/overview.cs.md#6-s3-backend) a [dokumentace endpointů AWS SDK](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-endpoints.html).
+
 ## Health endpointy
 
-`GET /healthz` vrací 200, když proces běží. `GET /readyz` vrací 200, když je aktivní NFS listener a exportovaný adresář lze otevřít. Oba endpointy jsou na `--health-listen`, ve výchozím stavu `:8080`.
+`GET /healthz` vrací 200, když proces běží. `GET /readyz` vrací 200, když je aktivní NFS listener a zvolený backend je dostupný (adresář nebo výpis S3 prefixu). Oba endpointy jsou na `--health-listen`, ve výchozím stavu `:8080`.
 
 ## Bezpečnost
 
@@ -173,7 +220,7 @@ UI ukazuje názvy souborů a cesty operací. Ponechte ho na loopbacku nebo ho ch
 
 `go-nfs` uchovává file handly v omezené cache v paměti. Po restartu serveru nebo vyřazení z cache mohou existující NFS mounty vrátit `stale file handle`; v takovém případě klienta znovu připojte. Stabilní adresa Service handly nezachová. Tvrdý NFS mount může během výpadku blokovat souborové operace. Cache klientů může zpozdit viditelnost změn. Automatické zotavení stávajícího mountu po restartu není garantované.
 
-Projekt neposkytuje vysokou dostupnost, perzistenci, replikaci, distribuované zámky ani stabilní handly po restartu. Hardlinky, speciální zařízení, rozšířená ACL a kvóty nejsou cílem. Go RPC test ověřuje dva klienty a základní operace; test kernelového mountu má tag `integration` a vyžaduje Linux, root oprávnění a `mount.nfs`.
+Projekt neposkytuje vysokou dostupnost, replikaci, distribuované zámky ani stabilní handly po restartu. Hardlinky, speciální zařízení, rozšířená ACL a kvóty nejsou cílem. Go RPC test ověřuje dva klienty a základní operace; S3 testy používají skutečné AWS SDK proti lokálnímu HTTP testovacímu úložišti a dva NFS RPC klienty; ověřují i chyby uploadu, souběh, data po restartu a atributy pro cache adresářů. Neověřují živý AWS účet ani všechny S3 kompatibilní služby. Test kernelového mountu lokálního backendu má tag `integration` a vyžaduje Linux, root oprávnění a `mount.nfs`.
 
 ## Vývoj
 
@@ -192,7 +239,7 @@ UI obsahuje vložené assety Tabler Admin, Tabler Icons a HTMX. Viz [THIRD_PARTY
 
 ## Licence
 
-Software je dostupný pod [MIT licencí](LICENSE). Vložené UI knihovny si zachovávají své vlastní licence.
+Software je dostupný pod [MIT licencí](LICENSE). Závislosti a vložené UI knihovny si zachovávají své vlastní licence; viz [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Komerční podpora
 

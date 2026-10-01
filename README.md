@@ -1,24 +1,24 @@
 # nfs-gate
 
-nfs-gate is a small userspace NFSv3 gateway that exposes an existing POSIX directory through a stable NFS endpoint. It is intended for Kubernetes and OpenShift applications that share one filesystem namespace while the backing storage can change.
+nfs-gate is a small userspace NFSv3 gateway that exposes an existing POSIX directory or S3 bucket/prefix through a stable NFS endpoint. It is intended for Kubernetes and OpenShift applications that share one filesystem namespace while the backing storage can change.
 
 ```text
-NFS clients → nfs-gate:12049 → POSIX directory
-                                  emptyDir, PVC, mounted NFS, FUSE, local disk
+NFS clients → nfs-gate:12049 → local backend: emptyDir, PVC, mounted NFS, local disk
+                            ↳ S3 backend: bucket/prefix via the Go SDK
 ```
 
-The server does not mount or provision the backend. It exports exactly one directory using [go-nfs](https://github.com/willscott/go-nfs). The filesystem adapter uses Go `os.Root` to contain path traversal and symlinks within the export.
+The server uses [go-nfs](https://github.com/willscott/go-nfs). The default `local` backend exports a mounted directory using Go `os.Root` to contain path traversal and symlinks. The `s3` backend accesses objects directly through the AWS SDK for Go v2; it requires no S3 mount, FUSE process or backend PVC.
 
 For a short explanation with a diagram and Kubernetes examples, see the [architecture overview (Czech)](docs/overview.cs.md) or its [PDF version](docs/overview.cs.pdf). A full Czech version of this README is in [README.cs.md](README.cs.md).
 
 ## How it works
 
 ```text
-Application Pods → client PVC → NFS PV → nfs-gate Service → nfs-gate Pod → backend directory
-                                                                  ↳ emptyDir or backend PVC
+Application Pods → client PVC → NFS PV → nfs-gate Service → nfs-gate Pod → storage backend
+                                                                  ↳ emptyDir, mounted NFS/PVC or S3
 ```
 
-Several application Pods can mount the **same client PVC**. Its static NFS PV points to the nfs-gate Service. The node mounts that export and presents it as a directory in each application Pod. nfs-gate translates NFSv3 file operations to ordinary operations under its configured `--root` directory. That directory comes from a separate backend volume: `emptyDir` for a disposable test, or a backend PVC or other POSIX mount for data that must outlive the server Pod. The client PVC and backend PVC have different roles; nfs-gate does not create either one.
+Several application Pods can mount the **same client PVC**. Its static NFS PV points to the nfs-gate Service. The node mounts that export and presents it as a directory in each application Pod. nfs-gate translates NFSv3 file operations to ordinary operations under its configured `--root` directory. That directory comes from a separate backend volume: `emptyDir` for a disposable test, or a backend PVC or direct NFS mount for data that must outlive the server Pod. The client PVC and optional backend PVC have different roles; nfs-gate does not create either one. With `--backend=s3`, the server uses a bucket/prefix instead of `--root`, while client PV/PVC mounts stay the same.
 
 ## Usage
 
@@ -62,7 +62,7 @@ The image uses `scratch`, a statically linked binary, and UID/GID 65532. Ensure 
 
 ## Kubernetes
 
-`deploy/kubernetes.yaml` includes one Deployment with `emptyDir` and a Service for NFS and health. Apply it with `kubectl apply -f deploy/kubernetes.yaml` after choosing an image available to your cluster. The Pod uses UID/GID 65532, `fsGroup`, and drops all capabilities. `emptyDir` survives a container restart in the same Pod, but its data is lost when the Pod is removed or replaced. Use a backend PVC for persistence across Pod replacement.
+`deploy/kubernetes.yaml` includes one Deployment with `emptyDir` and a Service for NFS and health. Apply it with `kubectl apply -f deploy/kubernetes.yaml` after choosing an image available to your cluster. The Pod uses UID/GID 65532, `fsGroup`, and drops all capabilities. `emptyDir` survives a container restart in the same Pod, but its data is lost when the Pod is removed or replaced. For persistence across Pod replacement, use a backend PVC or mount an external NFS export directly into the server Pod.
 
 Use the Service DNS name as the NFS address:
 
@@ -152,7 +152,17 @@ volumes:
 
 ### Several physical clusters
 
-If each cluster runs its own nfs-gate and applications in all clusters must see the **same files**, each gateway needs a backend mount of the **same external NFS export and path**. Create a backend NFS PV/PVC in each cluster that points to that shared export; mount it at `/data` in that cluster's nfs-gate Pod. The client NFS PV/PVC in each cluster still points to its *local* nfs-gate Service. Separate `emptyDir` volumes or independently provisioned backend PVCs do not share data across clusters. A dynamically provisioned NFS PVC may create a different subdirectory in each cluster, so verify the actual upstream export path. See the [two-cluster diagram and example](docs/overview.cs.md#5-vice-fyzickych-clusteru).
+If each cluster runs its own nfs-gate and applications in all clusters must see the **same files**, each gateway needs a backend mount of the **same external NFS export and path**. A backend PVC is optional: mount upstream NFS directly into each nfs-gate Pod with an inline `nfs` volume, keeping `--root=/data` and the existing `/data` volume mount:
+
+```yaml
+volumes:
+  - name: data
+    nfs:
+      server: <external-nfs-server>
+      path: /shared-export
+```
+
+Use the same `server` and `path` in every cluster. The client NFS PV/PVC in each cluster still points to its *local* nfs-gate Service. Separate `emptyDir` volumes or independently provisioned backend PVCs do not share data across clusters. Inline NFS volumes cannot specify mount options; if the upstream needs a custom port or NFS version, use a backend NFS PV/PVC with `mountOptions` or configure the nodes. See the [two-cluster diagram and example](docs/overview.cs.md#5-vice-fyzickych-clusteru).
 
 The upstream NFS server must be reachable from every cluster's nodes, and its permissions must allow the nfs-gate Pod to read and write. Cross-cluster changes can be delayed by caches; concurrent writes need application-level coordination because nfs-gate does not provide distributed locking. An upstream NFS backend shares data but does not make nfs-gate highly available or preserve its file handles across restarts.
 
@@ -172,9 +182,46 @@ volumeMounts:
 
 Changing from `emptyDir` to an upstream mount does not require changing application NFS endpoints. Preserve appropriate UID/GID and permissions on the backend.
 
+## Storage backends
+
+| Variant | Configuration | Data lifetime |
+| --- | --- | --- |
+| Disposable storage | `--backend=local --root=/data`, with Kubernetes `emptyDir` | Until the server Pod is removed or replaced |
+| Mounted filesystem | `--backend=local --root=/data`, with an NFS volume or backend PVC | Determined by the mounted storage |
+| S3 | `--backend=s3 --s3-bucket=... --s3-prefix=...` | Stored in the bucket, independently of the server Pod |
+
+`emptyDir` normally uses the node's disk; it means disposable storage, not necessarily RAM. No separate memory backend is needed for this variant.
+
+### S3 configuration
+
+```bash
+./bin/nfs-gate --backend=s3 \
+  --s3-bucket=your-bucket --s3-prefix=shared --s3-region=us-east-1
+```
+
+Credentials use the standard AWS SDK chain: environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`), shared AWS configuration, or workload identity/roles. Keep credentials outside manifests and command arguments. In Kubernetes, supply a separately created Secret or workload identity. The role needs `s3:ListBucket` for the exported prefix and `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` for its objects. SSE-KMS buckets may additionally require KMS permissions. The bucket must already exist.
+
+For an S3-compatible service, add `--s3-endpoint=https://objects.example.org --s3-path-style`. Set a region accepted by that service. Optional checksum extensions are disabled unless required by the operation; validate your provider's compatibility before deployment.
+
+Use [deploy/kubernetes-s3.yaml](deploy/kubernetes-s3.yaml) as an alternative server manifest. Replace the image, bucket, prefix and region, and supply the `nfs-gate-s3` Secret or workload identity. It has one replica, `Recreate`, no data volume and a read-only container filesystem. The client PV/PVC is still required for the current NFS mount options. The Docker image contains CA certificates for HTTPS.
+
+**Run exactly one active nfs-gate for each S3 bucket/prefix.** Do not run another writer over the same export, including in a different cluster, or modify its objects directly while it is active. There is no distributed lock or fencing. `replicas: 1` and `Recreate` prevent normal rollout overlap; operators must ensure the old process is stopped during failover. Clients from several clusters can use one shared gateway if their nodes can reach its NFS endpoint.
+
+### S3 file behavior and limits
+
+- A file maps to an object at `<prefix>/<relative-path>`. Empty directories use zero-length objects ending in `/`; existing object prefixes appear as directories. Use a dedicated prefix without conflicting file and directory names. Keys with traversal components, backslashes or noncanonical paths are not exposed.
+- Reads use range GETs. Each NFS write, truncate or file attribute update downloads the object as needed and uploads its complete replacement **before reporting success**. There is no pending write cache or local persistence requirement. A failed S3 request is returned as an NFS error; an interrupted request can have an uncertain outcome and must be checked before retrying a non-idempotent operation.
+- Writes are serialized inside the gateway, including writes through independently opened handles. This prevents lost updates within one process; application-level concurrent edits still need coordination. The NFS client's own cache can delay visibility.
+- The default writable file limit is **64 MiB**, configurable with `--s3-max-file-size` (bytes, maximum 5 GB). Reads can access larger objects, but mutations and renames of oversized objects fail. A modification can temporarily use several times the file's size in RAM. Each small NFS write can transfer the whole object, so this backend is intended for small shared files, not database files or large files with frequent random writes.
+- File rename uploads the destination and then deletes the source. It is serialized for clients of this gateway but is not a transaction in S3; a crash or failed deletion can leave both names. Directory rename, symbolic links, hard links, distributed file locks, extended ACLs and special files are unsupported.
+- Permissions, UID/GID and modification times are recorded in `nfs-*` object metadata and survive a gateway restart. The export root has fixed permissions and ownership; access time is not stored separately. Metadata represents file attributes, not authentication: the current NFS handler still uses AUTH_NULL.
+- `--s3-timeout` defaults to 30 seconds per API request. Startup and `/readyz` check listing access to the export; they do not prove write permissions. NFS handles remain process-local and clients may need to remount after a restart even though objects persist.
+
+See the [S3 architecture diagram](docs/s3.cs.svg), [S3 chapter in the Czech overview](docs/overview.cs.md#6-s3-backend), and [AWS SDK endpoint documentation](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-endpoints.html).
+
 ## Health
 
-`GET /healthz` returns 200 while the process is running. `GET /readyz` returns 200 when the NFS listener is active and the export directory still exists and can be opened. Both are on `--health-listen` (default `:8080`).
+`GET /healthz` returns 200 while the process is running. `GET /readyz` returns 200 when the NFS listener is active and the selected backend is accessible (local directory or S3 prefix listing). Both are on `--health-listen` (default `:8080`).
 
 ## Security considerations
 
@@ -186,9 +233,9 @@ The UI exposes file names and activity paths, even though it cannot read file co
 
 ## Limitations and restart behaviour
 
-go-nfs uses a bounded, in-memory file handle cache. Existing NFS mounts can receive `stale file handle` after the server restarts or cache entries are evicted; remount clients when this occurs. A stable Service address does not preserve file handles. During an outage, hard NFS mounts can block filesystem operations until the server returns. Client attribute caching can delay cross-client visibility. The restart and automatic recovery sequence has not been kernel-tested here; do not assume an existing mount recovers without remounting. This project does not provide HA, persistence, replication, distributed locks, or stable file handles across process restarts. Hard links, special devices, extended ACLs and quotas are not a target.
+go-nfs uses a bounded, in-memory file handle cache. Existing NFS mounts can receive `stale file handle` after the server restarts or cache entries are evicted; remount clients when this occurs. A stable Service address does not preserve file handles. During an outage, hard NFS mounts can block filesystem operations until the server returns. Client attribute caching can delay cross-client visibility. The restart and automatic recovery sequence has not been kernel-tested here; do not assume an existing mount recovers without remounting. This project does not provide HA, replication, distributed locks, or stable file handles across process restarts. Hard links, special devices, extended ACLs and quotas are not a target.
 
-The direct Go RPC test covers two clients and create, write, read, mkdir, rename, truncate and remove. A Linux kernel mount test is separately tagged `integration` and requires root, `mount.nfs` and mount privileges.
+The direct Go RPC test covers two clients and create, write, read, mkdir, rename, truncate and remove. S3 tests use the real AWS SDK against a local HTTP object-store fixture and two NFS RPC clients, including upload failure, concurrency, restart persistence and directory cache attributes. They do not verify a live AWS account or every S3-compatible provider. A Linux kernel mount test for the local backend is separately tagged `integration` and requires root, `mount.nfs` and mount privileges.
 
 ## Development
 
@@ -207,7 +254,7 @@ nfs-gate is not a distributed filesystem, persistent storage product, HA storage
 
 ## License
 
-The software is available under the [MIT License](LICENSE). Third-party UI assets retain their own licenses.
+The software is available under the [MIT License](LICENSE). Third-party dependencies and UI assets retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Commercial Support
 

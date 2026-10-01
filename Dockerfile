@@ -7,6 +7,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /nfs-gate ./
 RUN mkdir -p /data && chown 65532:65532 /data
 
 FROM scratch
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /nfs-gate /nfs-gate
 COPY --from=builder --chown=65532:65532 /data /data
 COPY LICENSE THIRD_PARTY_NOTICES.md /licenses/

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +20,8 @@ import (
 )
 
 type Config struct {
+	Backend                string
+	S3                     backend.S3Config
 	Listen                 string
 	Root                   string
 	HealthListen           string
@@ -55,19 +56,27 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := ValidateUIBind(cfg.UIListen, cfg.AllowUnauthenticatedUI); err != nil {
 		return err
 	}
-	stat, err := os.Stat(cfg.Root)
-	if err != nil {
-		return fmt.Errorf("export root: %w", err)
-	}
-	if !stat.IsDir() {
-		return fmt.Errorf("export root %q is not a directory", cfg.Root)
-	}
 	events := activity.New(500)
-	fs, err := backend.Open(cfg.Root, events)
+	var fs backend.Filesystem
+	var err error
+	switch cfg.Backend {
+	case "", "local":
+		if cfg.S3.Bucket != "" || cfg.S3.Prefix != "" || cfg.S3.Endpoint != "" {
+			return fmt.Errorf("S3 settings require --backend=s3")
+		}
+		fs, err = backend.Open(cfg.Root, events)
+	case "s3":
+		fs, err = backend.OpenS3(ctx, cfg.S3, events)
+	default:
+		return fmt.Errorf("unknown backend %q; use local or s3", cfg.Backend)
+	}
 	if err != nil {
 		return err
 	}
 	defer fs.Close()
+	if err := fs.Check(ctx); err != nil {
+		return fmt.Errorf("export unavailable: %w", err)
+	}
 	nfsListener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("NFS listener: %w", err)
@@ -94,28 +103,23 @@ func Run(ctx context.Context, cfg Config) error {
 			http.Error(w, "NFS listener unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		root, err := os.Open(cfg.Root)
-		if err != nil {
-			http.Error(w, "export root unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		defer root.Close()
-		info, err := root.Stat()
-		if err != nil || !info.IsDir() {
-			http.Error(w, "export root unavailable", http.StatusServiceUnavailable)
+		probeCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := fs.Check(probeCtx); err != nil {
+			http.Error(w, "export backend unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		fmt.Fprintln(w, "OK")
 	})
 	healthServer := &http.Server{Handler: healthMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
-	uiServer := &http.Server{Handler: ui.New(fs, events, cfg.Root, cfg.Version, &ready), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	uiServer := &http.Server{Handler: ui.New(fs, events, fs.Root(), cfg.Version, &ready), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	handler := helpers.NewCachingHandler(helpers.NewNullAuthHandler(fs), 65536)
 	nfsServer := &nfs.Server{Handler: handler, Context: ctx}
 	errs := make(chan error, 3)
 	go func() { errs <- nfsServer.Serve(tracked) }()
 	go func() { errs <- healthServer.Serve(healthListener) }()
 	go func() { errs <- uiServer.Serve(uiListener) }()
-	cfg.Logger.Info("nfs-gate starting", "root", cfg.Root)
+	cfg.Logger.Info("nfs-gate starting", "root", fs.Root(), "backend", fs.Kind())
 	cfg.Logger.Info("nfs listener active", "address", nfsListener.Addr().String())
 	cfg.Logger.Info("health listener active", "address", healthListener.Addr().String())
 	cfg.Logger.Info("UI listener active", "address", uiListener.Addr().String())

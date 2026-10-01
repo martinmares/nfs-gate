@@ -35,11 +35,12 @@
     <div class="page-pretitle">Read-only export inspection</div><h2 class="page-title">{{.Title}}</h2>
   </div></div></div></div><div class="page-body"><div class="container-xl">
   {{if eq .Active "overview"}}
+  {{if eq .Backend "s3"}}<div class="alert alert-info">S3 storage · One active gateway per bucket/prefix. Each write uploads the complete object before it is acknowledged.</div>{{end}}
   <div class="row row-cards mb-3">
     <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">NFS listener</div><div class="h2 mt-2">{{if .Ready}}<span class="text-green">Ready</span>{{else}}<span class="text-red">Unavailable</span>{{end}}</div></div></div></div>
     <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">Uptime</div><div class="h2 mt-2">{{.Uptime}}</div></div></div></div>
     <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">Errors observed</div><div class="h2 mt-2">{{.Errors}}</div></div></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">Export root</div><div class="mt-2 text-break font-monospace">{{.Root}}</div></div></div></div>
+    <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">Export root <span class="badge bg-azure-lt">{{.Backend}}</span></div><div class="mt-2 text-break font-monospace">{{.Root}}</div></div></div></div>
   </div>
   <div class="row row-cards"><div class="col-lg-4"><div class="card"><div class="card-header"><h3 class="card-title">Observed operations</h3></div><div class="table-responsive"><table class="table card-table"><tbody>{{range .Counters}}<tr><td>{{.Name}}</td><td class="text-end">{{.Count}}</td></tr>{{else}}<tr><td class="text-secondary">No NFS operations observed yet.</td></tr>{{end}}</tbody></table></div></div></div>
   <div class="col-lg-8"><div class="card"><div class="card-header"><h3 class="card-title">Recent activity</h3></div><div hx-get="/ui/fragments/activity" hx-trigger="every 5s" hx-swap="innerHTML">{{template "activity_table" .}}</div></div></div></div>

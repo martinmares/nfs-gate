@@ -1,0 +1,78 @@
+# Alternative to kubernetes.yaml. Set the image, bucket, region and prefix.
+# Create nfs-gate-s3 Secret separately, or replace envFrom with workload identity.
+# Exactly one active nfs-gate may write to the configured bucket/prefix.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-gate
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-gate
+  template:
+    metadata:
+      labels:
+        app: nfs-gate
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: nfs-gate
+          image: nfs-gate:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --backend=s3
+            - --s3-bucket=your-bucket
+            - --s3-prefix=shared
+            - --s3-region=us-east-1
+            - --listen=:12049
+            - --health-listen=:8080
+          envFrom:
+            - secretRef:
+                name: nfs-gate-s3
+          ports:
+            - name: nfs
+              containerPort: 12049
+            - name: health
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-gate
+spec:
+  selector:
+    app: nfs-gate
+  ports:
+    - name: nfs
+      port: 12049
+      targetPort: nfs
+      protocol: TCP
+    - name: health
+      port: 8080
+      targetPort: health
+      protocol: TCP

@@ -29,6 +29,7 @@ func StaticHandler() http.Handler {
 }
 
 type page struct {
+	Backend  string
 	Title    string
 	Active   string
 	Version  string
@@ -53,7 +54,7 @@ type counter struct {
 }
 type fileRow struct{ Name, Type, Size, Modified, Link string }
 type Handler struct {
-	fs            *backend.Local
+	fs            backend.Filesystem
 	events        *activity.Store
 	root, version string
 	ready         *atomic.Bool
@@ -61,7 +62,7 @@ type Handler struct {
 	tpl           *template.Template
 }
 
-func New(filesystem *backend.Local, events *activity.Store, root, version string, ready *atomic.Bool) http.Handler {
+func New(filesystem backend.Filesystem, events *activity.Store, root, version string, ready *atomic.Bool) http.Handler {
 	h := &Handler{fs: filesystem, events: events, root: root, version: version, ready: ready, started: time.Now()}
 	h.tpl = template.Must(template.New("page.html").ParseFS(assets, "templates/*.html"))
 	mux := http.NewServeMux()
@@ -96,7 +97,7 @@ func (h *Handler) base(title, active string) page {
 	if len(events) > 30 {
 		events = events[:30]
 	}
-	return page{Title: title, Active: active, Version: h.version, Root: h.root, Uptime: time.Since(h.started).Truncate(time.Second).String(), Ready: h.ready.Load(), Events: events, Counters: rows, Errors: errors}
+	return page{Backend: h.fs.Kind(), Title: title, Active: active, Version: h.version, Root: h.root, Uptime: time.Since(h.started).Truncate(time.Second).String(), Ready: h.ready.Load(), Events: events, Counters: rows, Errors: errors}
 }
 func (h *Handler) render(w http.ResponseWriter, data page) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

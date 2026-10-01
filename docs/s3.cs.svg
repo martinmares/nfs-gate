@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
+<title id="title">Jeden nfs-gate se S3 backendem</title>
+<desc id="desc">Aplikace ze stejného nebo více clusterů používají klientské NFS PV a PVC, které míří na jediný společný nfs-gate. Ten ukládá soubory přímo do jednoho S3 bucketu a prefixu přes HTTPS. Backendové PVC není potřeba.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1 1 L9 5 L1 9 Z" fill="#475569"/></marker>
+<style>.title{font:700 29px Arial,sans-serif;fill:#172554}.main{font:700 23px Arial,sans-serif;fill:#172554}.sub{font:18px Arial,sans-serif;fill:#334155}.note{font:17px Arial,sans-serif;fill:#475569}.arrow{fill:none;stroke:#475569;stroke-width:3;marker-end:url(#arrow)}</style>
+</defs>
+<rect width="960" height="560" fill="#fff"/>
+<text x="480" y="40" text-anchor="middle" class="title">S3: jeden společný server pro všechny klienty</text>
+<rect x="40" y="70" width="400" height="120" rx="13" fill="#e8f1ff" stroke="#79a5e8" stroke-width="2"/>
+<rect x="520" y="70" width="400" height="120" rx="13" fill="#e8f1ff" stroke="#79a5e8" stroke-width="2"/>
+<text x="240" y="104" text-anchor="middle" class="main">Aplikační Pody — cluster A</text>
+<text x="240" y="139" text-anchor="middle" class="sub">klientské PVC / NFS PV</text>
+<text x="240" y="169" text-anchor="middle" class="sub">/shared</text>
+<text x="720" y="104" text-anchor="middle" class="main">Aplikační Pody — cluster B</text>
+<text x="720" y="139" text-anchor="middle" class="sub">klientské PVC / NFS PV</text>
+<text x="720" y="169" text-anchor="middle" class="sub">/shared</text>
+<path class="arrow" d="M240 190 V220 H450 V248"/><path class="arrow" d="M720 190 V220 H510 V248"/>
+<rect x="210" y="258" width="540" height="115" rx="13" fill="#f1eafe" stroke="#ac8be0" stroke-width="2"/>
+<text x="480" y="293" text-anchor="middle" class="main">Jeden aktivní nfs-gate</text>
+<text x="480" y="327" text-anchor="middle" class="sub">dosažitelná NFS adresa • TCP 12049</text>
+<text x="480" y="355" text-anchor="middle" class="sub">NFSv3 → S3 API • bez backendového PVC</text>
+<path class="arrow" d="M480 373 V424"/>
+<text x="495" y="405" class="note">HTTPS / Go SDK</text>
+<rect x="260" y="434" width="440" height="82" rx="13" fill="#fff3df" stroke="#e8ad50" stroke-width="2"/>
+<text x="480" y="467" text-anchor="middle" class="main">S3 bucket + vyhrazený prefix</text>
+<text x="480" y="498" text-anchor="middle" class="sub">trvalá data, soubor = objekt</text>
+<text x="480" y="547" text-anchor="middle" class="note">Druhý zapisující nfs-gate nad stejným prefixem není podporován.</text>
+</svg>
